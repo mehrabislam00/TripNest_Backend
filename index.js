@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
 
 // Create an Express application
 const app = express();
@@ -44,77 +46,106 @@ const authUsersCollection = authDb.collection("user");
 const userProfilesCollection = db.collection("userProfiles");
 const bookingsCollection = db.collection("bookings");
 
+const JWKS = createRemoteJWKSet(
+  new URL(
+    process.env.AUTH_JWKS_URL ?? "http://localhost:3000/api/auth/jwks",
+  ),
+);
+
+// Middleware to verify the JWT from the authorization header.
+const verifyUserId = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const [scheme, token] = authHeader?.split(/\s+/) ?? [];
+  if (!authHeader || scheme?.toLowerCase() !== "bearer" || !token) {
+    return res
+      .status(401)
+      .send({ error: "A Bearer authorization token is required" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+    next();
+  } catch (error) {
+    console.error("Token verification failed:", error.code ?? error.message);
+    return res.status(401).send({ error: "Invalid or expired token" });
+  }
+};
+
+// Utility function to create a filter for user queries
+
 function userFilter(id) {
   const filters = [{ _id: id }];
   if (ObjectId.isValid(id)) filters.push({ _id: new ObjectId(id) });
   return filters.length === 1 ? filters[0] : { $or: filters };
 }
 
-// GET / - Health check for the API.
+//test route
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-// GET /destinations - Return all destinations.
-app.get("/destinations", async (req, res) => {
+
+//to get all destinations from the database
+app.get("/destinations", verifyUserId, async (req, res) => {
   const cursor = destinationsCollection.find({});
   const destinations = await cursor.toArray();
   res.send(destinations);
 });
 
-// GET /destinations/:id - Return one destination by MongoDB ID.
-app.get("/destinations/:id", async (req, res) => {
+//to get a single destination by id from the database
+app.get("/destinations/:id",  verifyUserId, async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
   const destination = await destinationsCollection.findOne(query);
   res.send(destination);
 });
 
-// PATCH /destinations/:id - Update a destination by MongoDB ID.
-app.patch("/destinations/:id", async (req, res) => {
-  const id = req.params.id;
-  const updatedDestination = req.body;
-  const filter = { _id: new ObjectId(id) };
-  const options = { upsert: true };
-  const updateDoc = {
-    $set: {
-      name: updatedDestination.name,
-      country: updatedDestination.country,
-      category: updatedDestination.category,
-      price: updatedDestination.price,
-      currency: updatedDestination.currency,
-      description: updatedDestination.description,
-      departureDate: updatedDestination.departureDate,
-      duration: updatedDestination.duration,
-      imageUrl: updatedDestination.imageUrl,
-    },
-  };
-  const result = await destinationsCollection.updateOne(
-    filter,
-    updateDoc,
-    options,
-  );
-  res.send(result);
-});
+// //update a destination by id
+// app.patch("/destinations/:id", async (req, res) => {
+//   const id = req.params.id;
+//   const updatedDestination = req.body;
+//   const filter = { _id: new ObjectId(id) };
+//   const options = { upsert: true };
+//   const updateDoc = {
+//     $set: {
+//       name: updatedDestination.name,
+//       country: updatedDestination.country,
+//       category: updatedDestination.category,
+//       price: updatedDestination.price,
+//       currency: updatedDestination.currency,
+//       description: updatedDestination.description,
+//       departureDate: updatedDestination.departureDate,
+//       duration: updatedDestination.duration,
+//       imageUrl: updatedDestination.imageUrl,
+//     },
+//   };
+//   const result = await destinationsCollection.updateOne(
+//     filter,
+//     updateDoc,
+//     options,
+//   );
+//   res.send(result);
+// });
 
-// DELETE /destinations/:id - Delete a destination by MongoDB ID.
-app.delete("/destinations/:id", async (req, res) => {
-  const id = req.params.id;
-  const query = { _id: new ObjectId(id) };
-  const result = await destinationsCollection.deleteOne(query);
-  res.send(result);
-});
+// //delete a destination by id
+// app.delete("/destinations/:id", async (req, res) => {
+//   const id = req.params.id;
+//   const query = { _id: new ObjectId(id) };
+//   const result = await destinationsCollection.deleteOne(query);
+//   res.send(result);
+// });
 
 
-// POST /add_destination - Create a new destination.
-app.post("/add_destination", async (req, res) => {
-  const destination = req.body;
-  const result = await destinationsCollection.insertOne(destination);
-  res.send(result);
-});
+// //to add a new destination to the database
+// app.post("/add_destination", async (req, res) => {
+//   const destination = req.body;
+//   const result = await destinationsCollection.insertOne(destination);
+//   res.send(result);
+// });
 
-// GET /user/:id - Return auth data merged with optional profile data.
-app.get("/user/:id", async (req, res) => {
+// Get authentication data with optional profile data.
+app.get("/user/:id",  verifyUserId, async (req, res) => {
   const id = req.params.id;
   const user = await authUsersCollection.findOne(userFilter(id));
 
@@ -131,8 +162,8 @@ app.get("/user/:id", async (req, res) => {
   res.send({ ...safeUser, ...profile, id });
 });
 
-// PATCH /user/:id - Update auth fields and upsert profile fields separately.
-app.patch("/user/:id", async (req, res) => {
+// Update authentication fields and upsert additional profile fields separately.
+app.patch("/user/:id",  verifyUserId, async (req, res) => {
   const id = req.params.id;
   const body = req.body ?? {};
   const authUpdate = {};
@@ -210,13 +241,14 @@ app.patch("/user/:id", async (req, res) => {
 });
 
 
-// GET /bookings - Return bookings filtered by userId or email.
-app.get("/bookings", async (req, res) => {
+//bookings collection routes
+app.get("/bookings", verifyUserId, async (req, res) => {
   const filter = {};
-  if (typeof req.query.userId === "string") filter.userId = req.query.userId;
-  else if (typeof req.query.email === "string") filter.email = req.query.email;
-  if (typeof req.query.destinationId === "string") {
-    filter.destinationId = req.query.destinationId;
+  if (typeof req.query.userId === "string" && req.query.userId.trim()) {
+    filter.userId = req.query.userId.trim();
+  }
+  if (typeof req.query.email === "string" && req.query.email.trim()) {
+    filter.email = req.query.email.trim().toLowerCase();
   }
 
   try {
@@ -228,8 +260,9 @@ app.get("/bookings", async (req, res) => {
   }
 });
 
-// POST /bookings - Create a booking document.
-app.post("/bookings", async (req, res) => {
+
+//to get a single booking by id from the database
+app.post("/bookings", verifyUserId, async (req, res) => {
   const booking = req.body;
   try {
     const result = await bookingsCollection.insertOne(booking);
@@ -240,8 +273,8 @@ app.post("/bookings", async (req, res) => {
   }
 });
 
-// PATCH /bookings/:id - Update a booking status by MongoDB ID.
-app.patch("/bookings/:id", async (req, res) => {
+// Update booking status by id
+app.patch("/bookings/:id", verifyUserId, async (req, res) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) {
     return res.status(400).send({ error: "Invalid booking id" });
@@ -264,6 +297,7 @@ app.patch("/bookings/:id", async (req, res) => {
   }
 });
 
+//to get a single destination by id from the database
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
