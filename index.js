@@ -38,7 +38,17 @@ export async function connectToMongoDB() {
 // Connect to MongoDB and get the destinations collection
 const ConnectedClient = await connectToMongoDB();
 const db = ConnectedClient.db("TripNest_DB");
+const authDb = ConnectedClient.db("auth");
 const destinationsCollection = db.collection("destinations");
+const authUsersCollection = authDb.collection("user");
+const userProfilesCollection = db.collection("userProfiles");
+const bookingsCollection = db.collection("bookings");
+
+function userFilter(id) {
+  const filters = [{ _id: id }];
+  if (ObjectId.isValid(id)) filters.push({ _id: new ObjectId(id) });
+  return filters.length === 1 ? filters[0] : { $or: filters };
+}
 
 //test route
 app.get("/", (req, res) => {
@@ -101,6 +111,115 @@ app.post("/add_destination", async (req, res) => {
   const destination = req.body;
   const result = await destinationsCollection.insertOne(destination);
   res.send(result);
+});
+
+// Get authentication data with optional profile data.
+app.get("/user/:id", async (req, res) => {
+  const id = req.params.id;
+  const user = await authUsersCollection.findOne(userFilter(id));
+
+  if (!user) {
+    return res.status(404).send({ error: "User not found" });
+  }
+
+  const profile = await userProfilesCollection.findOne(
+    { userId: id },
+    { projection: { _id: 0 } },
+  );
+  const { password: _password, ...safeUser } = user;
+
+  res.send({ ...safeUser, ...profile, id });
+});
+
+// Update authentication fields and upsert additional profile fields separately.
+app.patch("/user/:id", async (req, res) => {
+  const id = req.params.id;
+  const body = req.body ?? {};
+  const authUpdate = {};
+  const profileUpdate = {};
+
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || !body.name.trim()) {
+      return res.status(400).send({ error: "Name must be a non-empty string" });
+    }
+    authUpdate.name = body.name.trim();
+  }
+
+  if (body.email !== undefined) {
+    if (
+      typeof body.email !== "string" ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())
+    ) {
+      return res.status(400).send({ error: "A valid email is required" });
+    }
+    authUpdate.email = body.email.trim().toLowerCase();
+  }
+
+  for (const field of ["phone", "address", "avatar"]) {
+    if (body[field] !== undefined) {
+      if (typeof body[field] !== "string") {
+        return res.status(400).send({ error: `${field} must be a string` });
+      }
+      profileUpdate[field] = body[field].trim();
+    }
+  }
+
+  if (body.password !== undefined) {
+    return res.status(400).send({
+      error: "Password changes must use the authentication system",
+    });
+  }
+
+  if (!Object.keys(authUpdate).length && !Object.keys(profileUpdate).length) {
+    return res.status(400).send({ error: "No profile fields were provided" });
+  }
+
+  const user = await authUsersCollection.findOne(userFilter(id), {
+    projection: { _id: 1 },
+  });
+  if (!user) {
+    return res.status(404).send({ error: "User not found" });
+  }
+
+  try {
+    if (Object.keys(authUpdate).length) {
+      await authUsersCollection.updateOne(userFilter(id), {
+        $set: { ...authUpdate, updatedAt: new Date() },
+      });
+    }
+
+    if (Object.keys(profileUpdate).length) {
+      await userProfilesCollection.updateOne(
+        { userId: id },
+        {
+          $set: { ...profileUpdate, updatedAt: new Date() },
+          $setOnInsert: { userId: id, createdAt: new Date() },
+        },
+        { upsert: true },
+      );
+    }
+
+    res.send({ success: true });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).send({ error: "That email is already in use" });
+    }
+    console.error("Failed to update user profile:", error);
+    res.status(500).send({ error: "Failed to update user profile" });
+  }
+});
+
+
+//bookings collection routes
+app.post("/bookings", async (req, res) => {
+  const booking = req.body;
+  try {
+    const result = await bookingsCollection.insertOne(booking);
+    res.send(result);
+  } catch (error) {
+    console.error("Failed to create booking:", error);
+    res.status(500).send({ error: "Failed to create booking" });
+  }
 });
 
 //to get a single destination by id from the database
