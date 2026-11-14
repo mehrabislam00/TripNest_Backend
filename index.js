@@ -48,7 +48,7 @@ const bookingsCollection = db.collection("bookings");
 
 const JWKS = createRemoteJWKSet(
   new URL(
-    process.env.AUTH_JWKS_URL ?? "http://localhost:3000/api/auth/jwks",
+    process.env.AUTH_JWKS_URL ?? `${process.env.CLIENT_URI}/api/auth/jwks`,
   ),
 );
 
