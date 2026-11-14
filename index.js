@@ -212,12 +212,12 @@ app.patch("/user/:id", async (req, res) => {
 
 // GET /bookings - Return bookings filtered by userId or email.
 app.get("/bookings", async (req, res) => {
-  const filter =
-    typeof req.query.userId === "string"
-      ? { userId: req.query.userId }
-      : typeof req.query.email === "string"
-        ? { email: req.query.email }
-        : {};
+  const filter = {};
+  if (typeof req.query.userId === "string") filter.userId = req.query.userId;
+  else if (typeof req.query.email === "string") filter.email = req.query.email;
+  if (typeof req.query.destinationId === "string") {
+    filter.destinationId = req.query.destinationId;
+  }
 
   try {
     const bookings = await bookingsCollection.find(filter).toArray();
