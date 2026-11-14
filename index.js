@@ -87,14 +87,14 @@ app.get("/", (req, res) => {
 
 
 //to get all destinations from the database
-app.get("/destinations", verifyUserId, async (req, res) => {
+app.get("/destinations", async (req, res) => {
   const cursor = destinationsCollection.find({});
   const destinations = await cursor.toArray();
   res.send(destinations);
 });
 
 //to get a single destination by id from the database
-app.get("/destinations/:id",  verifyUserId, async (req, res) => {
+app.get("/destinations/:id", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
   const destination = await destinationsCollection.findOne(query);
