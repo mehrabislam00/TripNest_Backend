@@ -50,19 +50,19 @@ function userFilter(id) {
   return filters.length === 1 ? filters[0] : { $or: filters };
 }
 
-//test route
+// GET / - Health check for the API.
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-//to get all destinations from the database
+// GET /destinations - Return all destinations.
 app.get("/destinations", async (req, res) => {
   const cursor = destinationsCollection.find({});
   const destinations = await cursor.toArray();
   res.send(destinations);
 });
 
-//to get a single destination by id from the database
+// GET /destinations/:id - Return one destination by MongoDB ID.
 app.get("/destinations/:id", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
@@ -70,7 +70,7 @@ app.get("/destinations/:id", async (req, res) => {
   res.send(destination);
 });
 
-//update a destination by id
+// PATCH /destinations/:id - Update a destination by MongoDB ID.
 app.patch("/destinations/:id", async (req, res) => {
   const id = req.params.id;
   const updatedDestination = req.body;
@@ -97,7 +97,7 @@ app.patch("/destinations/:id", async (req, res) => {
   res.send(result);
 });
 
-//delete a destination by id
+// DELETE /destinations/:id - Delete a destination by MongoDB ID.
 app.delete("/destinations/:id", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
@@ -106,14 +106,14 @@ app.delete("/destinations/:id", async (req, res) => {
 });
 
 
-//to add a new destination to the database
+// POST /add_destination - Create a new destination.
 app.post("/add_destination", async (req, res) => {
   const destination = req.body;
   const result = await destinationsCollection.insertOne(destination);
   res.send(result);
 });
 
-// Get authentication data with optional profile data.
+// GET /user/:id - Return auth data merged with optional profile data.
 app.get("/user/:id", async (req, res) => {
   const id = req.params.id;
   const user = await authUsersCollection.findOne(userFilter(id));
@@ -131,7 +131,7 @@ app.get("/user/:id", async (req, res) => {
   res.send({ ...safeUser, ...profile, id });
 });
 
-// Update authentication fields and upsert additional profile fields separately.
+// PATCH /user/:id - Update auth fields and upsert profile fields separately.
 app.patch("/user/:id", async (req, res) => {
   const id = req.params.id;
   const body = req.body ?? {};
@@ -210,7 +210,25 @@ app.patch("/user/:id", async (req, res) => {
 });
 
 
-//bookings collection routes
+// GET /bookings - Return bookings filtered by userId or email.
+app.get("/bookings", async (req, res) => {
+  const filter =
+    typeof req.query.userId === "string"
+      ? { userId: req.query.userId }
+      : typeof req.query.email === "string"
+        ? { email: req.query.email }
+        : {};
+
+  try {
+    const bookings = await bookingsCollection.find(filter).toArray();
+    res.send(bookings);
+  } catch (error) {
+    console.error("Failed to load bookings:", error);
+    res.status(500).send({ error: "Failed to load bookings" });
+  }
+});
+
+// POST /bookings - Create a booking document.
 app.post("/bookings", async (req, res) => {
   const booking = req.body;
   try {
@@ -222,7 +240,30 @@ app.post("/bookings", async (req, res) => {
   }
 });
 
-//to get a single destination by id from the database
+// PATCH /bookings/:id - Update a booking status by MongoDB ID.
+app.patch("/bookings/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ error: "Invalid booking id" });
+  }
+
+  try {
+    const result = await bookingsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: req.body?.status, updatedAt: new Date() } },
+    );
+
+    if (!result.matchedCount) {
+      return res.status(404).send({ error: "Booking not found" });
+    }
+
+    res.send({ success: true });
+  } catch (error) {
+    console.error("Failed to update booking:", error);
+    res.status(500).send({ error: "Failed to update booking" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
